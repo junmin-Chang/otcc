@@ -125,7 +125,6 @@ inp()
         }
     } else
         ch = fgetc(file);
-    /*    printf("ch=%c 0x%x\n", ch, ch); */
 }
 
 isid()
@@ -223,13 +222,11 @@ next()
             while (l = *(char *)t++) {
                 a = *(char *)t++;
                 tokc = 0;
-                while ((tokl = *(char *)t++ - 'b') < 0)
+                while ((tokl = *(char *)t++ - 'b') < 0) {
                     tokc = tokc * 64 + tokl + 64;
-                if (l == tok & (a == ch | a == '@')) {
-#if 0
-                    printf("%c%c -> tokl=%d tokc=0x%x\n", 
-                           l, a, tokl, tokc);
-#endif
+                }
+               
+               if (l == tok & (a == ch | a == '@')) {
                     if (a == ch) {
                         inp();
                         tok = TOK_DUMMY; /* dummy token for double tokens */
@@ -239,27 +236,6 @@ next()
             }
         }
     }
-#if 0
-    {
-        int p;
-
-        printf("tok=0x%x ", tok);
-        if (tok >= TOK_IDENT) {
-            printf("'");
-            if (tok > TOK_DEFINE) 
-                p = sym_stk + 1 + (tok - vars - TOK_IDENT) / 8;
-            else
-                p = sym_stk + 1 + (tok - TOK_IDENT) / 8;
-            while (*(char *)p != TAG_TOK && *(char *)p)
-                printf("%c", *(char *)p++);
-            printf("'\n");
-        } else if (tok == TOK_NUM) {
-            printf("%d\n", tokc);
-        } else {
-            printf("'%c'\n", tok);
-        }
-    }
-#endif
 }
 
 #ifdef TINY
@@ -292,7 +268,7 @@ void skip(c)
 o(n)
 {
     /* cannot use unsigned, so we must do a hack */
-    while (n && n != -1) {
+   while (n && n != -1) {
         *(char *)ind++ = n;
         n = n >> 8;
     }
@@ -397,9 +373,10 @@ gmov(l, t)
     int n;
     o(l + 0x83);
     n = *(int *)t;
-    if (n && n < LOCAL)
+    if (n && n < LOCAL) {
         oad(0x85, n);
-    else {
+    }
+   else {
         t = t + 4;
         *(int *)t = psym(0x05, *(int *)t);
     }
@@ -548,7 +525,7 @@ sum(l)
                 if (l == 4 | l == 5) {
                     gcmp(t);
                 } else {
-                    o(t);
+                    o(t); 
                     if (n == '%')
                         o(0x92); /* xchg %edx, %eax */
                 }
@@ -731,14 +708,7 @@ elf_reloc(l)
         b = *(int *)tok;
         n = *(int *)(tok + 4);
         if (n && b != 1) {
-#if 0
-            {
-                char buf[100];
-                memcpy(buf, a, t - a);
-                buf[t - a] = '\0';
-                printf("extern ref='%s' val=%x\n", buf, b);
-            }
-#endif
+
             if (!b) {
                 if (!l) {
                     /* symbol string */
