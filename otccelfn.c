@@ -306,8 +306,10 @@ get32(t)
 gsym1(t, b)
 {
     int n;
+    printf("gsym1(): Back patching: symbol address = %d\n", b);
     while (t) {
         n = get32(t); /* next value */
+        printf("gsym1(): Patching at offset: %d\n", t - prog);
         /* patch absolute reference (always mov/lea before) */
         if (*(char *)(t - 1) == 0x05) {
             /* XXX: incorrect if data < 0 */
@@ -492,6 +494,7 @@ unary(l)
             l = l + 4;
         } else {
             /* forward reference */
+            printf("unary(): Function call to symbol at offset: %d\n", t - vars);
             t = t + 4;
             *(int *)t = psym(0xe8, *(int *)t);
         }
@@ -650,11 +653,11 @@ decl(l)
             *(int *)tok = ind;
             next();
             skip('(');
-            a = 8;
+            a = 8; // for 1st argument
             while (tok != ')') {
                 /* read param name and compute offset */
                 *(int *)tok = a;
-                a = a + 4;
+                a = a + 4; // for other arguments
                 next();
                 if (tok == ',')
                     next();
