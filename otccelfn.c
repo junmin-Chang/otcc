@@ -39,7 +39,7 @@
    For each character TAG_TOK at offset 'i' before a
     symbol in sym_stk, we have:
     v = (int *)(vars + 8 * i + TOK_IDENT)[0] 
-    p = (int *)(vars + 8 * i + TOK_IDENT)[0] 
+    p = (int *)(vars + 8 * i + TOK_IDENT)[1] 
     
     v = 0    : undefined symbol, p = list of use points.
     v = 1    : define symbol, p = pointer to define text.
@@ -581,6 +581,7 @@ block(l)
             n = ind;
             a = test_expr();
         } else {
+            // 연산에서의 소괄호
             if (tok != ';')
                 expr();
             skip(';');
