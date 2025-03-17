@@ -242,3 +242,162 @@ void skip(ch)
     
     read_token();
 }
+
+/* put machine code into machine code buffer */
+generate_machine_code(bytes) 
+{
+    while (bytes && bytes != -1) {
+        *(char *)code_current_ptr++ = bytes;
+        /*  emit machine code(0 ~ 4 bytes) buffer
+            into machine code buffer
+            with little endian 
+        */
+        bytes = bytes >> 8;
+    }
+}
+
+
+/* put a 32 bit little endian word 'n' at unaligned address 't' */
+/* 'generally' used to put word into memory address */
+add_word_to_addr(addr, word) {
+    *(char *)addr++ = word;
+    *(char *)addr++ = word >> 8;
+    *(char *)addr++ = word >> 16;
+    *(char *)addr++ = word >> 24;
+}
+/* read 32bit word from memory address */
+read_word_from_addr(addr)
+{
+    int word;
+    /* first 1 byte (LSB)*/
+    int a0 = *(char *)addr & 0xff;
+    int a1 = *(char *)(addr + 1) & 0xff << 8;
+    int a2 = *(char *)(addr + 2) & 0xff << 16;
+    int a3 = *(char *)(addr + 3) & 0xff << 24;
+
+    return a3 | a2 | a1 | a0;
+}
+
+/*  
+    patch symbol reference 
+    because our compiler has 1 pass
+    We should resolve forward reference by back patching
+
+    when we met 'return' statement, 
+    we should read all of that function
+    to know where the function ends.
+    so we can patch that unresolved symbol
+*/
+patch_symbol_ref(addr, sym_position) 
+{
+    int n;
+    /* pointer of unresolved symbols list(address chain) */
+    /* we should resolve it iteratively */
+    while (addr) {
+        /* iterate unresolved symbols */
+        n = read_word_from_addr(addr);
+        /* mov / lea instruction with **absolute** reference*/
+        if (*(char *)(addr - 1) == 0x05) {
+           if (sym_position >= data && sym_position < var_global_offset) 
+                 /* if symbol exists in data segment */
+                add_word_to_addr(addr, sym_position + data_offset);
+            else
+                /* if symbol exists in code segment */
+                add_word_to_addr(addr, sym_position - code_start_ptr + text + data_offset);
+        /* relative reference */
+        } else {
+            add_word_to_addr(addr, sym_position - addr - 4);
+        }
+        addr = n;
+    }
+}
+
+generate_machine_code_with_addr(word, addr) 
+{
+    generate_machine_code(word);
+    /* append address to machine code */
+    add_word_to_addr(code_current_ptr, addr);
+    /* address we appended right before */
+    addr = code_current_ptr;
+    code_current_ptr = code_current_ptr + 4;
+
+    /* return address we appended */
+    return addr;
+}
+
+/* helper: load imm value to register eax */
+load_immediate(imm)
+{
+    /* mov $xx, %eax */
+    generate_machine_code_with_addr(0xb8, imm);
+}
+
+/* unconditional jump */
+generate_jump(addr)
+{
+    return generate_machine_code_with_addr(0xe9, addr);   
+}
+
+generate_cond_jump(not_equal, addr) 
+{
+    /* 
+        0xfc085
+        : generate 'test %eax, %eax' which instruction operate
+        AND on %eax register.
+        After that operation, set the flags whether %eax is 0 or not
+    */
+    generate_machine_code(0x0fc085); 
+    /*  
+        l = 0 ==> 0x84 = je, jump if %eax is 0 
+        l = 1 ==> 0x85 = jne, jump if %eax is not 0 
+     */
+    return generate_machine_code_with_addr(0x84 + not_equal, addr);
+}
+
+generate_compare(cond)
+{
+    /* 
+        cmp %eax, %ecx 
+        depending on result ==> set CPU flag 
+    */
+    generate_machine_code(0xc139);
+    /* mov $0, %eax */
+    load_immediate(0);
+    generate_machine_code(0x0f);
+    /*
+        set eax to 1 if equal, not equal, less, ...
+        sete, setne, setle, setg 
+        which of them ?
+        ... depends on (0x90 + cond)
+    */
+    generate_machine_code(cond + 0x90);
+    
+    /* 
+        this byte(0xc0) determines 
+        which bytes setxx should modify
+        0xc0 ==> LSByte
+    */
+    generate_machine_code(0xc0);
+}
+
+generate_move(l, addr)
+{
+    /*
+        depending on l, generate different MOV instruction
+        l = 6: mov %eax, EA
+        l = 8: mov EA, %eax
+        l = 10: lea EA, %eax
+    */
+    int n;
+    generate_machine_code(l + 0x83);
+    /* n is value of address */
+    n = *(int *)addr;
+    /* < LOCAL means we will move local variable(in stack frame) */
+    if (n && n < LOCAL) {
+        generate_machine_code_with_addr(0x85, n);
+    } else {
+        /* process global or symbol */
+        addr = addr + 4;
+        *(int *)addr = generate_machine_code_with_addr(0x05, *(int *)addr);
+    }
+}
