@@ -401,3 +401,44 @@ generate_move(l, addr)
         *(int *)addr = generate_machine_code_with_addr(0x05, *(int *)addr);
     }
 }
+
+/* l is 1 if '=' parsing wanted (quick hack)*/
+
+parse_unary_expr(l) {
+    int expr_type, tmp_tok, tmp_tok_constant, tmp_tok_level;
+
+    /* type of expression 0 = forward, 1 = value, other = lvalue */
+    expr_type = 1;
+
+    if (tok == '\"') {
+        /* load string literal's address to %eax */
+        load_immediate(var_global_offset + data_offset);
+        while (ch != '\"') {
+            process_escape();
+            *(char *)var_global_offset++ = ch;
+            read_ch();
+        }
+        /* insert terminating symbol to end of string*/
+        *(char *)var_global_offset = 0;
+
+        /* 
+            align 4 bytes boundary 
+            -4 = 11111....11100 (2's complement)
+            1. if glo = 5 --> ....00101
+            2. glo + 4 = 9 --> ...01001
+            3. & -4 = ...1000 = 8 
+            --> 5바이트까지 차지했네..  다음엔 8에서 시작한다
+        */
+        var_global_offset = var_global_offset + 4 & -4;
+        read_ch();
+        read_token();
+    } else {
+        tmp_tok_level = tok_level;
+        tmp_tok_constant = tok_constant;
+        tmp_tok = tok;
+
+        read_token();
+
+    }
+
+}
