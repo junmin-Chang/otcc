@@ -219,3 +219,26 @@ read_token()
         }
     }
 }
+
+/* function to print error messages via STDERR */
+/* can print with variable arguments */
+void error(char *fmt, ...)
+{
+   va_list arg_ptr;
+
+    va_start(arg_ptr, fmt);
+    fprintf(stderr, "%d: ", ftell((FILE *)file_ptr));
+    vfprintf(stderr, fmt, arg_ptr);
+    fprintf(stderr, "\n");
+    exit(1);
+    va_end(arg_ptr);
+}
+
+void skip(ch) 
+{
+    if (tok != ch) {
+        error("'%c' expected", ch);
+    }
+    
+    read_token();
+}
