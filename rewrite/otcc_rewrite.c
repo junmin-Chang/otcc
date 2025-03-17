@@ -380,14 +380,15 @@ generate_compare(cond)
     generate_machine_code(0xc0);
 }
 
-generate_move(l, addr)
-{
-    /*
+ /*
         depending on l, generate different MOV instruction
         l = 6: mov %eax, EA
         l = 8: mov EA, %eax
         l = 10: lea EA, %eax
     */
+generate_move(l, addr)
+{
+   
     int n;
     generate_machine_code(l + 0x83);
     /* n is value of address */
@@ -408,10 +409,11 @@ parse_unary_expr(l) {
     int expr_type, tmp_tok, tmp_tok_constant, tmp_tok_level;
 
     /* type of expression 0 = forward, 1 = value, other = lvalue */
-    expr_type = 1;
+    expr_type = 1; /* default value = 1 ==> expression as value */
 
+    /* parse string literal */
     if (tok == '\"') {
-        /* load string literal's address to %eax */
+        /* load string literal's **address** to %eax */
         load_immediate(var_global_offset + data_offset);
         while (ch != '\"') {
             process_escape();
@@ -433,12 +435,115 @@ parse_unary_expr(l) {
         read_ch();
         read_token();
     } else {
+        /* before read_token(), we should save our token's info in tmp variables */
         tmp_tok_level = tok_level;
         tmp_tok_constant = tok_constant;
         tmp_tok = tok;
 
-        read_token();
+        read_token(); /* tok updated */
 
+        if (tmp_tok == TOK_NUM) {
+            load_immediate(tmp_tok_constant);
+        } else if (tmp_tok_level == 2) {
+            /* -, +, !, ~ */
+            parse_unary_expr(0);
+            /* mov $0, %ecx */
+            generate_machine_code_with_addr(0xb9, 0);
+            if (tmp_tok == '!')
+                generate_compare(tmp_tok_constant);
+            else
+                generate_machine_code(tmp_tok_constant);
+        } else if (tmp_tok == '(') {
+            parse_expr();
+            skip(')');
+        } else if (tmp_tok == '*') {
+            /* hard to understand */
+            /* parse cast */
+            skip('*');
+            tmp_tok = tok; /* get type */
+            read_token(); /* skip int/char/void */
+            read_token(); /* skip '*' or ')' */
+
+            if (tok == '*') {
+                /* function pointer */
+                skip('*');
+                skip(')');
+                skip('(');
+                skip(')');
+                tmp_tok = 0;
+            }
+            skip(')');
+            parse_unary_expr(0);
+            if (tok == '=') {
+                read_token();
+                /* %eax has pointer address */
+                generate_machine_code(0x50); /* push %eax */
+                parse_expr();
+                generate_machine_code(0x59); /* pop %ecx */
+                /* movl %eax/%al, (%ecx) */
+                generate_machine_code(0x0188 + (tmp_tok == TOK_INT)); 
+            } else if (tmp_tok) {
+                if (tmp_tok == TOK_INT)
+                    /* store 4byte*/
+                    generate_machine_code(0x8b);
+                else
+                    generate_machine_code(0xbe0f); /* movsbl (%eax), %(eax) */
+                code_current_ptr++; /* add zero in code */
+            }
+        } else if (tmp_tok == '&') {
+            generate_move(10, tok); /* leal EA, %eax */
+            read_token();
+        } else {
+            expr_type = 0;
+            if (tok == '=' & l) {
+                /* assignment */
+                read_token();
+                parse_expr();
+                generate_move(6, tmp_tok); /* mov %eax, EA */
+            } else if (tok != '(') {
+                /* variable */
+                generate_move(8, tmp_tok); /* mov EA, %eax */
+                if (tok_level == 11) {
+                    generate_move(0, tmp_tok);
+                    generate_machine_code(tok_constant);
+                    read_token();
+                }
+            }
+        }
+    }
+    /* function call */
+    if (tok == '(') {
+        if (expr_type) 
+            generate_machine_code(0x50); /* push %eax */
+        
+        /* push args and invert order */
+        tmp_tok_constant = generate_machine_code_with_addr(0xec81, 0); /* sub $xxx, %esp */
+        read_token();
+        l = 0;
+        while (tok != ')') {
+            /* process arguments */
+            parse_expr();
+            generate_machine_code_with_addr(0x248489, l); /* movl %eax, xxx(%esp) */
+            if (tok == ',')
+                read_token();
+            l = l + 4;
+        }
+
+        add_word_to_addr(tmp_tok_constant, l);
+        read_token();
+        if (expr_type) {
+            /* indirect call using function pointer */
+            generate_machine_code_with_addr(0x2494ff, l); /* call *xxx(%esp) */
+            l = l + 4;
+        } else {
+            /* direct call */
+            /* forward reference */
+            tmp_tok = tmp_tok + 4;
+            *(int *)tmp_tok = generate_machine_code_with_addr(0xe8, *(int *)tmp_tok);
+        }
+
+        if (expr_type) 
+            generate_machine_code_with_addr(0xc481, l); /* add $xxx, %esp */
     }
 
 }
