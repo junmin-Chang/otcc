@@ -12,7 +12,7 @@ int var_table;
 
 /* local variable offset within var_table */
 int var_local_offset;
-int var_global_offset;
+int data_segment_current;
 
 /* return address list (when backpatching) */
 int ra_list;
@@ -35,7 +35,7 @@ int ch_before_macro;
 int identifier_last;
 
 /* segments / offset related with ELF file format*/
-int data, text, data_offset;
+int data_segment_start, text, data_offset;
 
 /* 
 allocate 99999Byte in Heap, using calloc 
@@ -297,12 +297,12 @@ read_word_from_addr(addr)
 {
     int word;
     /* first 1 byte (LSB)*/
-    int a0 = *(char *)addr & 0xff;
-    int a1 = *(char *)(addr + 1) & 0xff << 8;
-    int a2 = *(char *)(addr + 2) & 0xff << 16;
-    int a3 = *(char *)(addr + 3) & 0xff << 24;
+    int byte0 = *(char *)addr & 0xff;
+    int byte1 = (*(char *)(addr + 1) & 0xff) << 8;
+    int byte2 = (*(char *)(addr + 2) & 0xff) << 16;
+    int byte3 = (*(char *)(addr + 3) & 0xff) << 24;
 
-    return a3 | a2 | a1 | a0;
+    return byte3 | byte2 | byte1 | byte0;
 }
 
 /*  
@@ -325,8 +325,8 @@ patch_symbol_ref(addr, sym_position)
         n = read_word_from_addr(addr);
         /* mov / lea instruction with **absolute** reference*/
         if (*(char *)(addr - 1) == 0x05) {
-           if (sym_position >= data && sym_position < var_global_offset) 
-                 /* if symbol exists in data segment */
+           if (sym_position >= data_segment_start && sym_position < data_segment_current) 
+                 /* if symbol exists in data_segment_start segment */
                 add_word_to_addr(addr, sym_position + data_offset);
             else
                 /* if symbol exists in code segment */
@@ -444,24 +444,24 @@ parse_unary_expr(l)
     /* parse string literal */
     if (tok == '\"') {
         /* load string literal's **address** to %eax */
-        load_immediate(var_global_offset + data_offset);
+        load_immediate(data_segment_current + data_offset);
         while (ch != '\"') {
             process_escape();
-            *(char *)var_global_offset++ = ch;
+            *(char *)data_segment_current++ = ch;
             read_ch();
         }
         /* insert terminating symbol to end of string*/
-        *(char *)var_global_offset = 0;
+        *(char *)data_segment_current = 0;
 
         /* 
             align 4 bytes boundary 
             -4 = 11111....11100 (2's complement)
-            1. if var_global_offset = 5 --> ....00101
-            2. var_global_offset + 4 = 9 --> ...01001
+            1. if data_segment_current = 5 --> ....00101
+            2. data_segment_current + 4 = 9 --> ...01001
             3. & -4 = ...1000 = 8 
             --> 5바이트까지 차지했네..  다음엔 8에서 시작한다
         */
-        var_global_offset = var_global_offset + 4 & -4;
+        data_segment_current = data_segment_current + 4 & -4;
         read_ch();
         read_token();
     } else {
@@ -657,7 +657,7 @@ parse_cond_expr()
 
 parse_block(l)
 {
-    int cond_jump_addr, jump_addr, tmp_addr;
+    int cond_jump_addr, jump_addr, tmp_tok;
 
     if (tok == TOK_IF) {
         read_token();
@@ -680,10 +680,10 @@ parse_block(l)
             patch_symbol_ref(cond_jump_addr, code_current_ptr);
         }
     } else if (tok == TOK_WHILE | tok == TOK_FOR) {
-        tmp_addr = tok;
+        tmp_tok = tok;
         read_token();
         skip('(');
-        if (tmp_addr = TOK_WHILE) {
+        if (tmp_tok == TOK_WHILE) {
             /* start of while loop address */
             jump_addr = code_current_ptr;
             /*  parse condition, generate cond jump, 
@@ -707,18 +707,18 @@ parse_block(l)
 
             /* parsing increment in for (.... ; i = i + 1) */
             if (tok != ')') {
-                tmp_addr = generate_jump(0);
+                tmp_tok = generate_jump(0);
                 parse_entire_expr();
                 /* go back to conditional check.. */
                 generate_jump(jump_addr - code_current_ptr - 5);
-                patch_symbol_ref(tmp_addr);
-                jump_addr = tmp_addr + 4;
+                patch_symbol_ref(tmp_tok, code_current_ptr);
+                jump_addr = tmp_tok + 4;
             }
         }
         skip(')');
         parse_block(&cond_jump_addr);
         generate_jump(jump_addr - code_current_ptr - 5);
-        patch_symbol_ref(cond_jump_addr);
+        patch_symbol_ref(cond_jump_addr, code_current_ptr);
     } else if (tok == '{') {
         read_token();
         /* declaration (local variables )*/
@@ -755,8 +755,8 @@ parse_decl(l)
                     var_local_offset = var_local_offset + 4;
                     *(int *)tok = -var_local_offset;
                 } else {
-                    *(int *)tok = var_global_offset;
-                    var_global_offset = var_global_offset + 4;
+                    *(int *)tok = data_segment_current;
+                    data_segment_current = data_segment_current + 4;
                 }
                 read_token();
                 if (tok == ',')
@@ -789,7 +789,7 @@ parse_decl(l)
             /* save to 'arg_offset' for patching */
             arg_offset = generate_machine_code_with_addr(0xec81, 0); /* sub $xxx, %esp */
             parse_block(0);
-            patch_symbol_ref(ra_list);
+            patch_symbol_ref(ra_list, code_current_ptr);
             generate_machine_code(0xc3c9);
             /* patch $xxx in sub $xxx, %esp with local var's offset */
             add_word_to_addr(arg_offset, var_local_offset);
@@ -801,8 +801,8 @@ parse_decl(l)
 
 gle32(n)
 {
-    add_word_to_addr(var_global_offset, n);
-    var_global_offset = var_global_offset + 4;
+    add_word_to_addr(data_segment_current, n);
+    data_segment_current = data_segment_current + 4;
 }
 
 /* used to generate a program header at offset 't' of size 's' */
@@ -839,8 +839,8 @@ elf_reloc(l)
             if (!b) {
                 if (!l) {
                     /* symbol string */
-                    memcpy(var_global_offset, a, t - a);
-                    var_global_offset = var_global_offset + t - a + 1; /* add a zero */
+                    memcpy(data_segment_current, a, t - a);
+                    data_segment_current = data_segment_current + t - a + 1; /* add a zero */
                 } else if (l == 1) {
                     /* symbol table */
                     gle32(p + DYNSTR_BASE);
@@ -875,7 +875,7 @@ elf_out(c)
 
     /*****************************/
     /* add text segment (but copy it later to handle relocations) */
-    text = var_global_offset;
+    text = data_segment_current;
     text_size = code_current_ptr - code_start_ptr;
 
     /* add the startup code */
@@ -886,24 +886,24 @@ elf_out(c)
     generate_machine_code(0xc389);  /* movl %eax, %ebx */
     load_immediate(1);      /* mov $1, %eax */
     generate_machine_code(0x80cd);  /* int $0x80 */
-    var_global_offset = var_global_offset + text_size;
+    data_segment_current = data_segment_current + text_size;
 
     /*****************************/
     /* add symbol strings */
-    dynstr = var_global_offset;
+    dynstr = data_segment_current;
     /* libc name for dynamic table */
-    var_global_offset++;
-    var_global_offset = strcpy(var_global_offset, "libc.so.6") + 10;
-    var_global_offset = strcpy(var_global_offset, "libdl.so.2") + 11;
+    data_segment_current++;
+    data_segment_current = strcpy(data_segment_current, "libc.so.6") + 10;
+    data_segment_current = strcpy(data_segment_current, "libdl.so.2") + 11;
     
     /* export all forward referenced functions */
     elf_reloc(0);
-    dynstr_size = var_global_offset - dynstr;
+    dynstr_size = data_segment_current - dynstr;
 
     /*****************************/
     /* add symbol table */
-    var_global_offset = (var_global_offset + 3) & -4;
-    dynsym = var_global_offset;
+    data_segment_current = (data_segment_current + 3) & -4;
+    dynsym = data_segment_current;
     gle32(0);
     gle32(0);
     gle32(0);
@@ -912,8 +912,8 @@ elf_out(c)
 
     /*****************************/
     /* add symbol hash table */
-    hash = var_global_offset;
-    n = (var_global_offset - dynsym) / 16;
+    hash = data_segment_current;
+    n = (data_segment_current - dynsym) / 16;
     gle32(1); /* one bucket (simpler!) */
     gle32(n);
     gle32(1);
@@ -925,14 +925,14 @@ elf_out(c)
     
     /*****************************/
     /* relocation table */
-    rel = var_global_offset;
+    rel = data_segment_current;
     elf_reloc(2);
 
     /* copy code AFTER relocation is done */
     memcpy(text, code_start_ptr, text_size);
 
-    glo_saved = var_global_offset;
-    var_global_offset = data;
+    glo_saved = data_segment_current;
+    data_segment_current = data_segment_start;
 
     /* elf header */
     gle32(0x464c457f);
@@ -955,7 +955,7 @@ elf_out(c)
     gle32(1); /* align */
     
     gle32(1); /* PT_LOAD */
-    gphdr1(0, glo_saved - data);
+    gphdr1(0, glo_saved - data_segment_start);
     gle32(7); /* PF_R | PF_X | PF_W */
     gle32(0x1000); /* align */
     
@@ -965,7 +965,7 @@ elf_out(c)
     gle32(0x4); /* align */
 
     /* now the interpreter name */
-    var_global_offset = strcpy(var_global_offset, "/lib/ld-linux.so.2") + 0x14;
+    data_segment_current = strcpy(data_segment_current, "/lib/ld-linux.so.2") + 0x14;
 
     /* now the dynamic section */
     gle32(1); /* DT_NEEDED */
@@ -992,7 +992,7 @@ elf_out(c)
     gle32(0);
 
     t = fopen(c, "w");
-    fwrite(data, 1, glo_saved - data, t);
+    fwrite(data_segment_start, 1, glo_saved - data_segment_start, t);
     fclose(t);
 }
 #endif
@@ -1005,15 +1005,15 @@ main(n, t)
     }
     sym_stack_current_ptr = strcpy(sym_stack_start_ptr = calloc(1, ALLOC_SIZE), 
                   " int if else while break return for define main ") + TOK_STR_SIZE;
-    var_global_offset = data = calloc(1, ALLOC_SIZE);
+    data_segment_current = data_segment_start = calloc(1, ALLOC_SIZE);
     code_current_ptr = code_start_ptr = calloc(1, ALLOC_SIZE);
     var_table = calloc(1, ALLOC_SIZE);
 
     t = t + 4;
     file_ptr = fopen(*(int *)t, "r");
 
-    data_offset = ELF_BASE - data; 
-    var_global_offset = var_global_offset + ELFSTART_SIZE;
+    data_offset = ELF_BASE - data_segment_start; 
+    data_segment_current = data_segment_current + ELFSTART_SIZE;
     code_current_ptr = code_current_ptr + STARTUP_SIZE;
 
     read_ch();
