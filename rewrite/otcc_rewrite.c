@@ -1,13 +1,5 @@
 #include <stdarg.h>
 #include <stdio.h>
-/*
-    변수 설명
-*/
-int op_first_chars[24] = {'+', '+', '*', '/', '%', '+', '-', '<', '>', '<', '>', '<', '>', '=', '!', '&', '|', '&', '^', '|', '~', '!', '*', 0};
-int op_second_chars[24] = {'+', '@', '@', '@', '@', '@', '@', '<', '>', '=', '=', '@', '@', '=', '=', '&', '|', '@', '@', '@', '@', '@', '@', 0};
-int op_precedences[24] = {2, 2, 3, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 11, 12, 8, 9, 10, 2, 2, 1, 0};
-int op_codes[24] = {1, 1, 12693263, -101213807, -101213807, 51201, -654850007, 14734225, 16307089, 14, 13, 12, 15, 4, 5, 0, 1, 51233, 51249, 51209, 53495, 4, 0, 0};
-
 
 /* token, token constant(value), token level(precedence), current char */
 int tok, tok_constant, tok_level, ch; 
@@ -43,6 +35,12 @@ int identifier_last;
 
 /* segments / offset related with ELF file format*/
 int data_segment_start, text, data_offset;
+
+/* (global) operator precedence and opcode */
+int op_first_chars[24] = {'+', '-', '*', '/', '%', '+', '-', '<', '>', '<', '>', '<', '>', '=', '!', '&', '|', '&', '^', '|', '~', '!', '*', 0};
+int op_second_chars[24] = {'+', '-', '@', '@', '@', '@', '@', '<', '>', '=', '=', '@', '@', '=', '=', '&', '|', '@', '@', '@', '@', '@', '@', 0};
+int op_precedences[24] = {11, 11, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 9, 10, 6, 7, 8, 2, 2, 0, 0};
+int op_codes[24] = {0x0001, 0x00ff, 0xc1af0f, 0xf9f79991, 0xf9f79991, 0xc801, 0xd8f7c829, 0xe0d391, 0xf8d391, 0x000e, 0x000d, 0x000c, 0x000f, 0x0004, 0x0005, 0x0000, 0x0001, 0xc821, 0xc831, 0xc809, 0xd0f7, 0x0004, 0x0000, 0x0000};
 
 /* 
 allocate 99999Byte in Heap, using calloc 
@@ -232,13 +230,16 @@ read_token()
             read_ch();
             read_token();
         } else {
-            /* left = '+' from "++" */
+            /* 
+                from complex, compressed string 
+                to simple, multiple array (op_first_chars, op_second_chars, op_precedence, op_codes) 
+                --> result: use more text segments.. but more simple
+            */
             int i = 0;
             while (op_first_chars[i] != 0) {
                if (op_first_chars[i] == tok & (op_second_chars[i] == ch | op_second_chars[i] == '@')) {
                     tok_level = op_precedences[i];
                     tok_constant = op_codes[i];
-                    printf("opr : %c%c, level: %d, value: %d\n", op_first_chars[i], op_second_chars[i], op_precedences[i], op_codes[i]); 
                 
                     if (op_second_chars[i] == ch) {
                         read_ch();
