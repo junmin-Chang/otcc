@@ -4,7 +4,7 @@
     변수 설명
 */
 
-/* token, token constant, token level(precedence), current char */
+/* token, token constant(value), token level(precedence), current char */
 int tok, tok_constant, tok_level, ch; 
 
 /* variables table for accessing var's value within stack frame */
@@ -12,18 +12,20 @@ int var_table;
 
 /* local variable offset within var_table */
 int var_local_offset;
+
+/* pointer for global variable in data segment */
 int data_segment_current;
 
 /* return address list (when backpatching) */
 int ra_list;
 
-/* machine code */
+/* pointers for machine code in text segment*/
 int text_segment_start, text_segment_current;
 
 /* file pointer */
 int file_ptr;
 
-/* symbol stack */
+/* pointers for symbol stack */
 int sym_stack_start_ptr;
 int sym_stack_current_ptr;
 
@@ -329,7 +331,7 @@ patch_symbol_ref(addr, sym_position)
                  /* if symbol exists in data_segment_start segment */
                 add_word_to_addr(addr, sym_position + data_offset);
             else
-                /* if symbol exists in code segment */
+                /* if symbol exists in text segment */
                 add_word_to_addr(addr, sym_position - text_segment_start + text + data_offset);
         /* relative reference */
         } else {
