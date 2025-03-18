@@ -405,7 +405,8 @@ generate_move(l, addr)
 
 /* l is 1 if '=' parsing wanted (quick hack)*/
 
-parse_unary_expr(l) {
+parse_unary_expr(l)
+{
 
     /* TODO: refactor local variable's name again */
     int expr_type, tmp_tok, tmp_tok_constant, tmp_tok_level;
@@ -558,7 +559,8 @@ parse_unary_expr(l) {
 
 }
 
-parse_binary_expr(level) {
+parse_binary_expr(level)
+{
     int op_value, tmp_tok, jump_chain;
     if (level-- == 1)
         parse_unary_expr(1);
@@ -615,16 +617,19 @@ parse_binary_expr(level) {
     }
 }
 
-parse_entire_expr() {
+parse_entire_expr()
+{
     parse_binary_expr(11);
 }
 
-parse_cond_expr() {
+parse_cond_expr()
+{
     parse_entire_expr();
     return generate_cond_jump(0, 0);
 }
 
-parse_block(l) {
+parse_block(l)
+{
     int cond_jump_addr, jump_addr, tmp_addr;
 
     if (tok == TOK_IF) {
@@ -706,5 +711,61 @@ parse_block(l) {
         } else if (tok != ';') 
             parse_entire_expr();
         skip(';');
+    }
+}
+
+/* l is true if local declaration */
+parse_decl(l)
+{
+    int arg_offset;
+
+    while (tok == TOK_INT | tok != -1 & !l) {
+        if (tok == TOK_INT) {
+            read_token();
+            while (tok != ';') {
+                if (l) {
+                    /* process local variable */
+                    var_local_offset = var_local_offset + 4;
+                    *(int *)tok = -var_local_offset;
+                } else {
+                    *(int *)tok = var_global_offset;
+                    var_global_offset = var_global_offset + 4;
+                }
+                read_token();
+                if (tok == ',')
+                    read_token();
+            }
+            skip(';');
+        } else { /* parse function declaration */
+            /* put function address */
+            *(int *)tok = code_current_ptr;
+            read_token();
+            skip('(');
+            /*
+            [EBP+0] = previous EBP value 
+            [EBP+4] = return address 
+            [EBP+8] = 1st arguments  
+            */
+            arg_offset = 8; /* for 1st arguments */
+            while (tok != ')') {
+                /* read args name and compute offset */
+                *(int *)tok = arg_offset;
+                arg_offset = arg_offset + 4; /* for other args */
+                read_token();
+                if (tok == ',')
+                    read_token();
+            }
+            read_token(); /* skip ')' */
+            ra_list = var_local_offset = 0;
+            /* prologue */
+            generate_machine_code(0xe58955); /* push %ebp, mov %esp, %ebp */
+            /* save to 'arg_offset' for patching */
+            arg_offset = generate_machine_code_with_addr(0xec81, 0); /* sub $xxx, %esp */
+            parse_block(0);
+            patch_symbol_ref(ra_list);
+            generate_machine_code(0xc3c9);
+            /* patch $xxx in sub $xxx, %esp with local var's offset */
+            add_word_to_addr(arg_offset, var_local_offset);
+        }
     }
 }
