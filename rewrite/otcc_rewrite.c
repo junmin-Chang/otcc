@@ -406,6 +406,8 @@ generate_move(l, addr)
 /* l is 1 if '=' parsing wanted (quick hack)*/
 
 parse_unary_expr(l) {
+
+    /* TODO: refactor local variable's name again */
     int expr_type, tmp_tok, tmp_tok_constant, tmp_tok_level;
 
     /* type of expression 0 = forward, 1 = value, other = lvalue */
@@ -474,13 +476,21 @@ parse_unary_expr(l) {
             }
             skip(')');
             parse_unary_expr(0);
-            if (tok == '=') {
+
+            /* dereference *ptr = value */
+            if (tok == '=') { 
                 read_token();
                 /* %eax has pointer address */
                 generate_machine_code(0x50); /* push %eax */
+                /* parsing value */
                 parse_expr();
                 generate_machine_code(0x59); /* pop %ecx */
-                /* movl %eax/%al, (%ecx) */
+                /*
+                    movl %eax/%al, (%ecx) 
+                    if tok type == INT --> store 4bytes(%eax)
+                    else               --> store 1bytes(%al)
+                 */
+                
                 generate_machine_code(0x0188 + (tmp_tok == TOK_INT)); 
             } else if (tmp_tok) {
                 if (tmp_tok == TOK_INT)
@@ -546,4 +556,155 @@ parse_unary_expr(l) {
             generate_machine_code_with_addr(0xc481, l); /* add $xxx, %esp */
     }
 
+}
+
+parse_binary_expr(level) {
+    int op_value, tmp_tok, jump_chain;
+    if (level-- == 1)
+        parse_unary_expr(1);
+    else {
+        parse_binary_expr(level);
+        jump_chain = 0;
+        while (level == tok_level) {
+            tmp_tok = tok;
+            op_value = tok_constant;
+            read_token();
+            
+            if (level > 8) {
+                jump_chain = generate_cond_jump(op_value, jump_chain);
+                parse_binary_expr(level);
+            } else {
+                /* operand1 to stack */
+                generate_machine_code(0x50); /* push %eax */
+                /* parse operand2 and store to %eax */
+                parse_binary_expr(level);
+                /* operand1 to %ecx */
+                generate_machine_code(0x59); /* pop %ecx */
+
+                if (level == 4 | level == 5) {
+                    generate_compare(op_value);
+                } else {
+                    generate_machine_code(op_value);
+                    if (tmp_tok == '%') 
+                        generate_machine_code(0x92); /* xchg %edx %eax */
+                }
+            }
+        }
+
+        /* && and || output code generation */
+        /* if jump_chain exists, tok_level > 8 --> &&, ||*/
+        if (jump_chain && level > 8) {
+            /* return 'new' jump instruction's address */
+            jump_chain = generate_cond_jump(op_value, jump_chain);
+            /* if op_value = 0 --> 1, 1 --> 0 */
+            load_immediate(op_value ^ 1);
+            /* 
+                unconditional jump, current_position + 5
+                skip 2 forward instructions
+            */
+            geopnerate_jump(5); 
+            patch_symbol_ref(jump_chain, code_current_ptr);
+            load_immediate(op_value);
+            /*
+                for example, a && b
+                if a has false, executes conditional jump, result--> op_value^1
+                if a has true, b has false, conditional jump, result --> op_value ^ 1
+                if a,b both have true, do not execute cond jump, result --> op_value
+            */
+        }
+    }
+}
+
+parse_entire_expr() {
+    parse_binary_expr(11);
+}
+
+parse_cond_expr() {
+    parse_entire_expr();
+    return generate_cond_jump(0, 0);
+}
+
+parse_block(l) {
+    int cond_jump_addr, jump_addr, tmp_addr;
+
+    if (tok == TOK_IF) {
+        read_token();
+        skip('(');
+        /* generate cond jump if condition is false --> to else block */
+        cond_jump_addr = parse_cond_expr();
+        skip(')');
+        parse_block(l);
+        if (tok == TOK_ELSE) {
+            read_token();
+            /* don't know destination, patch it later */
+            jump_addr = generate_jump(0);
+            patch_symbol_ref(cond_jump_addr, code_current_ptr); /* patch else jmp */
+            /* parse else block */
+            parse_block(l);
+            /* patch destination --> end of else block */
+            patch_symbol_ref(jump_addr, code_current_ptr); /* patch if test */
+        } else {
+            /* patch don't know address --> after if block */
+            patch_symbol_ref(cond_jump_addr, code_current_ptr);
+        }
+    } else if (tok == TOK_WHILE | tok == TOK_FOR) {
+        tmp_addr = tok;
+        read_token();
+        skip('(');
+        if (tmp_addr = TOK_WHILE) {
+            /* start of while loop address */
+            jump_addr = code_current_ptr;
+            /*  parse condition, generate cond jump, 
+                we'll be redirected to this address
+                if we have false condition
+            */
+            cond_jump_addr = parse_cond_expr();
+        } else {
+            /* for (a = 1; */
+            if (tok != ';') 
+                parse_entire_expr();
+            skip(';');
+
+            /* address of condition checking, in loop */
+            jump_addr = code_current_ptr;
+            /* address generates if condition has false */
+            cond_jump_addr = 0;
+            if (tok != ';')
+                cond_jump_addr = parse_cond_expr();
+            skip(';');
+
+            /* parsing increment in for (.... ; i = i + 1) */
+            if (tok != ')') {
+                tmp_addr = generate_jump(0);
+                parse_entire_expr();
+                /* go back to conditional check.. */
+                generate_jump(jump_addr - code_current_ptr - 5);
+                patch_symbol_ref(tmp_addr);
+                jump_addr = tmp_addr + 4;
+            }
+        }
+        skip(')');
+        parse_block(&cond_jump_addr);
+        generate_jump(jump_addr - code_current_ptr - 5);
+        patch_symbol_ref(cond_jump_addr);
+    } else if (tok == '{') {
+        read_token();
+        /* declaration (local variables )*/
+        parse_decl(1);
+        while (tok != '}')
+            parse_block(l);
+        read_token();
+    } else {
+        if (tok == TOK_RETURN) {
+            read_token();
+            if (tok != ';')
+                parse_entire_expr();
+            ra_list = generate_jump(ra_list);
+        } else if (tok == TOK_BREAK) {
+            read_token();
+            *(int *)l = generate_jump(*(int *)l);
+        } else if (tok != ';') 
+            parse_entire_expr();
+        skip(';');
+    }
 }
