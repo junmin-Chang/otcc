@@ -1,6 +1,5 @@
 #include <stdarg.h>
 #include <stdio.h>
-
 /*
     변수 설명
 */
@@ -45,9 +44,7 @@ allocate 99999Byte in Heap, using calloc
 --> variable table
 */
 #define ALLOC_SIZE 99999
-
-/* allow to emit ELF file */
-// #define ELFOUT
+#define ELFOUT
 
 #define TOK_STR_SIZE        48
 #define TOK_IDENT           0x100
@@ -72,6 +69,35 @@ allocate 99999Byte in Heap, using calloc
 /* tokens in string heap */
 #define TAG_TOK             ' '
 #define TAG_MACRO           2
+
+/* additionnal elf output defines */
+#ifdef ELFOUT
+
+#define ELF_BASE      0x08048000
+#define PHDR_OFFSET   0x30
+
+#define INTERP_OFFSET 0x90
+#define INTERP_SIZE   0x13
+
+#ifndef TINY
+#define DYNAMIC_OFFSET (INTERP_OFFSET + INTERP_SIZE + 1)
+#define DYNAMIC_SIZE   (11*8)
+
+#define ELFSTART_SIZE  (DYNAMIC_OFFSET + DYNAMIC_SIZE)
+#else
+#define DYNAMIC_OFFSET 0xa4
+#define DYNAMIC_SIZE   0x58
+
+#define ELFSTART_SIZE  0xfc
+#endif
+
+/* size of startup code */
+#define STARTUP_SIZE   17
+
+/* size of library names at the start of the .dynstr section */
+#define DYNSTR_BASE      22
+
+#endif
 
 add_ch_to_sym_stack(ch)
 {
@@ -769,3 +795,204 @@ parse_decl(l)
         }
     }
 }
+
+#ifdef ELFOUT
+
+gle32(n)
+{
+    put32(glo, n);
+    glo = glo + 4;
+}
+
+/* used to generate a program header at offset 't' of size 's' */
+gphdr1(n, t)
+{
+    gle32(n);
+    n = n + ELF_BASE;
+    gle32(n);
+    gle32(n);
+    gle32(t);
+    gle32(t);
+}
+
+elf_reloc(l)
+{
+    int t, a, n, p, b, c;
+
+    p = 0;
+    t = sym_stk;
+    while (1) {
+        /* extract symbol name */
+        t++;
+        a = t;
+        while (*(char *)t != TAG_TOK && t < dstk)
+            t++;
+        if (t == dstk)
+            break;
+        /* now see if it is forward defined */
+        tok = vars + (a - sym_stk) * 8 + TOK_IDENT - 8;
+        b = *(int *)tok;
+        n = *(int *)(tok + 4);
+        if (n && b != 1) {
+
+            if (!b) {
+                if (!l) {
+                    /* symbol string */
+                    memcpy(glo, a, t - a);
+                    glo = glo + t - a + 1; /* add a zero */
+                } else if (l == 1) {
+                    /* symbol table */
+                    gle32(p + DYNSTR_BASE);
+                    gle32(0);
+                    gle32(0);
+                    gle32(0x10); /* STB_GLOBAL, STT_NOTYPE */
+                    p = p + t - a + 1; /* add a zero */
+                } else {
+                    p++;
+                    /* generate relocation patches */
+                    while (n) {
+                        a = get32(n);
+                        /* c = 0: R_386_32, c = 1: R_386_PC32 */
+                        c = *(char *)(n - 1) != 0x05;
+                        put32(n, -c * 4);
+                        gle32(n - prog + text + data_offset);
+                        gle32(p * 256 + c + 1);
+                        n = a;
+                    }
+                }
+            } else if (!l) {
+                /* generate standard relocation */
+                gsym1(n, b);
+            }
+        }
+    }
+}
+
+elf_out(c)
+{
+    int glo_saved, dynstr, dynstr_size, dynsym, hash, rel, n, t, text_size;
+
+    /*****************************/
+    /* add text segment (but copy it later to handle relocations) */
+    text = glo;
+    text_size = ind - prog;
+
+    /* add the startup code */
+    ind = prog;
+    o(0x505458); /* pop %eax, push %esp, push %eax */
+    t = *(int *)(vars + TOK_MAIN);
+    oad(0xe8, t - ind - 5);
+    o(0xc389);  /* movl %eax, %ebx */
+    li(1);      /* mov $1, %eax */
+    o(0x80cd);  /* int $0x80 */
+    glo = glo + text_size;
+
+    /*****************************/
+    /* add symbol strings */
+    dynstr = glo;
+    /* libc name for dynamic table */
+    glo++;
+    glo = strcpy(glo, "libc.so.6") + 10;
+    glo = strcpy(glo, "libdl.so.2") + 11;
+    
+    /* export all forward referenced functions */
+    elf_reloc(0);
+    dynstr_size = glo - dynstr;
+
+    /*****************************/
+    /* add symbol table */
+    glo = (glo + 3) & -4;
+    dynsym = glo;
+    gle32(0);
+    gle32(0);
+    gle32(0);
+    gle32(0);
+    elf_reloc(1);
+
+    /*****************************/
+    /* add symbol hash table */
+    hash = glo;
+    n = (glo - dynsym) / 16;
+    gle32(1); /* one bucket (simpler!) */
+    gle32(n);
+    gle32(1);
+    gle32(0); /* dummy first symbol */
+    t = 2;
+    while (t < n)
+        gle32(t++);
+    gle32(0);
+    
+    /*****************************/
+    /* relocation table */
+    rel = glo;
+    elf_reloc(2);
+
+    /* copy code AFTER relocation is done */
+    memcpy(text, prog, text_size);
+
+    glo_saved = glo;
+    glo = data;
+
+    /* elf header */
+    gle32(0x464c457f);
+    gle32(0x00010101);
+    gle32(0);
+    gle32(0);
+    gle32(0x00030002);
+    gle32(1);
+    gle32(text + data_offset); /* address of _start */
+    gle32(PHDR_OFFSET); /* offset of phdr */
+    gle32(0);
+    gle32(0);
+    gle32(0x00200034);
+    gle32(3); /* phdr entry count */
+
+    /* program headers */
+    gle32(3); /* PT_INTERP */
+    gphdr1(INTERP_OFFSET, INTERP_SIZE);
+    gle32(4); /* PF_R */
+    gle32(1); /* align */
+    
+    gle32(1); /* PT_LOAD */
+    gphdr1(0, glo_saved - data);
+    gle32(7); /* PF_R | PF_X | PF_W */
+    gle32(0x1000); /* align */
+    
+    gle32(2); /* PT_DYNAMIC */
+    gphdr1(DYNAMIC_OFFSET, DYNAMIC_SIZE);
+    gle32(6); /* PF_R | PF_W */
+    gle32(0x4); /* align */
+
+    /* now the interpreter name */
+    glo = strcpy(glo, "/lib/ld-linux.so.2") + 0x14;
+
+    /* now the dynamic section */
+    gle32(1); /* DT_NEEDED */
+    gle32(1); /* libc name */
+    gle32(1); /* DT_NEEDED */
+    gle32(11); /* libdl name */
+    gle32(4); /* DT_HASH */
+    gle32(hash + data_offset);
+    gle32(6); /* DT_SYMTAB */
+    gle32(dynsym + data_offset);
+    gle32(5); /* DT_STRTAB */
+    gle32(dynstr + data_offset);
+    gle32(10); /* DT_STRSZ */
+    gle32(dynstr_size);
+    gle32(11); /* DT_SYMENT */
+    gle32(16);
+    gle32(17); /* DT_REL */
+    gle32(rel + data_offset);
+    gle32(18); /* DT_RELSZ */
+    gle32(glo_saved - rel);
+    gle32(19); /* DT_RELENT */
+    gle32(8);
+    gle32(0);  /* DT_NULL */
+    gle32(0);
+
+    t = fopen(c, "w");
+    fwrite(data, 1, glo_saved - data, t);
+    fclose(t);
+}
+#endif
+
