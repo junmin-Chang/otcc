@@ -171,6 +171,7 @@ read_token()
     /* encode identifier & numbers */
     if (is_identifier()) {
         add_ch_to_sym_stack(TAG_TOK);
+        identifier_last = sym_stack_current_ptr;
         while (is_identifier()) {
             add_ch_to_sym_stack(ch);
             read_ch();
@@ -455,8 +456,8 @@ parse_unary_expr(l)
         /* 
             align 4 bytes boundary 
             -4 = 11111....11100 (2's complement)
-            1. if glo = 5 --> ....00101
-            2. glo + 4 = 9 --> ...01001
+            1. if var_global_offset = 5 --> ....00101
+            2. var_global_offset + 4 = 9 --> ...01001
             3. & -4 = ...1000 = 8 
             --> 5바이트까지 차지했네..  다음엔 8에서 시작한다
         */
@@ -483,7 +484,7 @@ parse_unary_expr(l)
             else
                 generate_machine_code(tmp_tok_constant);
         } else if (tmp_tok == '(') {
-            parse_expr();
+            parse_entire_expr();
             skip(')');
         } else if (tmp_tok == '*') {
             /* hard to understand */
@@ -510,7 +511,7 @@ parse_unary_expr(l)
                 /* %eax has pointer address */
                 generate_machine_code(0x50); /* push %eax */
                 /* parsing value */
-                parse_expr();
+                parse_entire_expr();
                 generate_machine_code(0x59); /* pop %ecx */
                 /*
                     movl %eax/%al, (%ecx) 
@@ -535,7 +536,7 @@ parse_unary_expr(l)
             if (tok == '=' & l) {
                 /* assignment */
                 read_token();
-                parse_expr();
+                parse_entire_expr();
                 generate_move(6, tmp_tok); /* mov %eax, EA */
             } else if (tok != '(') {
                 /* variable */
@@ -559,7 +560,7 @@ parse_unary_expr(l)
         l = 0;
         while (tok != ')') {
             /* process arguments */
-            parse_expr();
+            parse_entire_expr();
             generate_machine_code_with_addr(0x248489, l); /* movl %eax, xxx(%esp) */
             if (tok == ',')
                 read_token();
@@ -630,7 +631,7 @@ parse_binary_expr(level)
                 unconditional jump, current_position + 5
                 skip 2 forward instructions
             */
-            geopnerate_jump(5); 
+            generate_jump(5); 
             patch_symbol_ref(jump_chain, code_current_ptr);
             load_immediate(op_value);
             /*
@@ -800,8 +801,8 @@ parse_decl(l)
 
 gle32(n)
 {
-    put32(glo, n);
-    glo = glo + 4;
+    add_word_to_addr(var_global_offset, n);
+    var_global_offset = var_global_offset + 4;
 }
 
 /* used to generate a program header at offset 't' of size 's' */
@@ -820,17 +821,17 @@ elf_reloc(l)
     int t, a, n, p, b, c;
 
     p = 0;
-    t = sym_stk;
+    t = sym_stack_start_ptr;
     while (1) {
         /* extract symbol name */
         t++;
         a = t;
-        while (*(char *)t != TAG_TOK && t < dstk)
+        while (*(char *)t != TAG_TOK && t < sym_stack_current_ptr)
             t++;
-        if (t == dstk)
+        if (t == sym_stack_current_ptr)
             break;
         /* now see if it is forward defined */
-        tok = vars + (a - sym_stk) * 8 + TOK_IDENT - 8;
+        tok = var_table + (a - sym_stack_start_ptr) * 8 + TOK_IDENT - 8;
         b = *(int *)tok;
         n = *(int *)(tok + 4);
         if (n && b != 1) {
@@ -838,8 +839,8 @@ elf_reloc(l)
             if (!b) {
                 if (!l) {
                     /* symbol string */
-                    memcpy(glo, a, t - a);
-                    glo = glo + t - a + 1; /* add a zero */
+                    memcpy(var_global_offset, a, t - a);
+                    var_global_offset = var_global_offset + t - a + 1; /* add a zero */
                 } else if (l == 1) {
                     /* symbol table */
                     gle32(p + DYNSTR_BASE);
@@ -851,18 +852,18 @@ elf_reloc(l)
                     p++;
                     /* generate relocation patches */
                     while (n) {
-                        a = get32(n);
+                        a = read_word_from_addr(n);
                         /* c = 0: R_386_32, c = 1: R_386_PC32 */
                         c = *(char *)(n - 1) != 0x05;
-                        put32(n, -c * 4);
-                        gle32(n - prog + text + data_offset);
+                        add_word_to_addr(n, -c * 4);
+                        gle32(n - code_start_ptr + text + data_offset);
                         gle32(p * 256 + c + 1);
                         n = a;
                     }
                 }
             } else if (!l) {
                 /* generate standard relocation */
-                gsym1(n, b);
+                patch_symbol_ref(n, b);
             }
         }
     }
@@ -874,35 +875,35 @@ elf_out(c)
 
     /*****************************/
     /* add text segment (but copy it later to handle relocations) */
-    text = glo;
-    text_size = ind - prog;
+    text = var_global_offset;
+    text_size = code_current_ptr - code_start_ptr;
 
     /* add the startup code */
-    ind = prog;
-    o(0x505458); /* pop %eax, push %esp, push %eax */
-    t = *(int *)(vars + TOK_MAIN);
-    oad(0xe8, t - ind - 5);
-    o(0xc389);  /* movl %eax, %ebx */
-    li(1);      /* mov $1, %eax */
-    o(0x80cd);  /* int $0x80 */
-    glo = glo + text_size;
+    code_current_ptr = code_start_ptr;
+    generate_machine_code(0x505458); /* pop %eax, push %esp, push %eax */
+    t = *(int *)(var_table + TOK_MAIN);
+    generate_machine_code_with_addr(0xe8, t - code_current_ptr - 5);
+    generate_machine_code(0xc389);  /* movl %eax, %ebx */
+    load_immediate(1);      /* mov $1, %eax */
+    generate_machine_code(0x80cd);  /* int $0x80 */
+    var_global_offset = var_global_offset + text_size;
 
     /*****************************/
     /* add symbol strings */
-    dynstr = glo;
+    dynstr = var_global_offset;
     /* libc name for dynamic table */
-    glo++;
-    glo = strcpy(glo, "libc.so.6") + 10;
-    glo = strcpy(glo, "libdl.so.2") + 11;
+    var_global_offset++;
+    var_global_offset = strcpy(var_global_offset, "libc.so.6") + 10;
+    var_global_offset = strcpy(var_global_offset, "libdl.so.2") + 11;
     
     /* export all forward referenced functions */
     elf_reloc(0);
-    dynstr_size = glo - dynstr;
+    dynstr_size = var_global_offset - dynstr;
 
     /*****************************/
     /* add symbol table */
-    glo = (glo + 3) & -4;
-    dynsym = glo;
+    var_global_offset = (var_global_offset + 3) & -4;
+    dynsym = var_global_offset;
     gle32(0);
     gle32(0);
     gle32(0);
@@ -911,8 +912,8 @@ elf_out(c)
 
     /*****************************/
     /* add symbol hash table */
-    hash = glo;
-    n = (glo - dynsym) / 16;
+    hash = var_global_offset;
+    n = (var_global_offset - dynsym) / 16;
     gle32(1); /* one bucket (simpler!) */
     gle32(n);
     gle32(1);
@@ -924,14 +925,14 @@ elf_out(c)
     
     /*****************************/
     /* relocation table */
-    rel = glo;
+    rel = var_global_offset;
     elf_reloc(2);
 
     /* copy code AFTER relocation is done */
-    memcpy(text, prog, text_size);
+    memcpy(text, code_start_ptr, text_size);
 
-    glo_saved = glo;
-    glo = data;
+    glo_saved = var_global_offset;
+    var_global_offset = data;
 
     /* elf header */
     gle32(0x464c457f);
@@ -964,7 +965,7 @@ elf_out(c)
     gle32(0x4); /* align */
 
     /* now the interpreter name */
-    glo = strcpy(glo, "/lib/ld-linux.so.2") + 0x14;
+    var_global_offset = strcpy(var_global_offset, "/lib/ld-linux.so.2") + 0x14;
 
     /* now the dynamic section */
     gle32(1); /* DT_NEEDED */
@@ -996,3 +997,29 @@ elf_out(c)
 }
 #endif
 
+main(n, t)
+{
+    if (n < 3) {
+        printf("usage: otccelf file.c outfile\n");
+        return 0;
+    }
+    sym_stack_current_ptr = strcpy(sym_stack_start_ptr = calloc(1, ALLOC_SIZE), 
+                  " int if else while break return for define main ") + TOK_STR_SIZE;
+    var_global_offset = data = calloc(1, ALLOC_SIZE);
+    code_current_ptr = code_start_ptr = calloc(1, ALLOC_SIZE);
+    var_table = calloc(1, ALLOC_SIZE);
+
+    t = t + 4;
+    file_ptr = fopen(*(int *)t, "r");
+
+    data_offset = ELF_BASE - data; 
+    var_global_offset = var_global_offset + ELFSTART_SIZE;
+    code_current_ptr = code_current_ptr + STARTUP_SIZE;
+
+    read_ch();
+    read_token();
+    parse_decl(0);
+    t = t + 4;
+    elf_out(*(int *)t);
+    return 0;
+}

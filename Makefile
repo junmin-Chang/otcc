@@ -5,7 +5,7 @@ TARGET = otcc
 
 all: $(TARGET)
 
-$(TARGET): otcc_rewrite.c
+$(TARGET): ./rewrite/otcc_rewrite.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:

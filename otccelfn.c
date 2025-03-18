@@ -39,7 +39,7 @@
    For each character TAG_TOK at offset 'i' before a
     symbol in sym_stk, we have:
     v = (int *)(vars + 8 * i + TOK_IDENT)[0] 
-    p = (int *)(vars + 8 * i + TOK_IDENT)[1] 
+    p = (int *)(vars + 8 * i + TOK_IDENT)[0] 
     
     v = 0    : undefined symbol, p = list of use points.
     v = 1    : define symbol, p = pointer to define text.
@@ -125,6 +125,7 @@ inp()
         }
     } else
         ch = fgetc(file);
+    /*    printf("ch=%c 0x%x\n", ch, ch); */
 }
 
 isid()
@@ -222,11 +223,13 @@ next()
             while (l = *(char *)t++) {
                 a = *(char *)t++;
                 tokc = 0;
-                while ((tokl = *(char *)t++ - 'b') < 0) {
+                while ((tokl = *(char *)t++ - 'b') < 0)
                     tokc = tokc * 64 + tokl + 64;
-                }
-               
-               if (l == tok & (a == ch | a == '@')) {
+                if (l == tok & (a == ch | a == '@')) {
+#if 0
+                    printf("%c%c -> tokl=%d tokc=0x%x\n", 
+                           l, a, tokl, tokc);
+#endif
                     if (a == ch) {
                         inp();
                         tok = TOK_DUMMY; /* dummy token for double tokens */
@@ -236,6 +239,27 @@ next()
             }
         }
     }
+#if 0
+    {
+        int p;
+
+        printf("tok=0x%x ", tok);
+        if (tok >= TOK_IDENT) {
+            printf("'");
+            if (tok > TOK_DEFINE) 
+                p = sym_stk + 1 + (tok - vars - TOK_IDENT) / 8;
+            else
+                p = sym_stk + 1 + (tok - TOK_IDENT) / 8;
+            while (*(char *)p != TAG_TOK && *(char *)p)
+                printf("%c", *(char *)p++);
+            printf("'\n");
+        } else if (tok == TOK_NUM) {
+            printf("%d\n", tokc);
+        } else {
+            printf("'%c'\n", tok);
+        }
+    }
+#endif
 }
 
 #ifdef TINY
@@ -268,7 +292,7 @@ void skip(c)
 o(n)
 {
     /* cannot use unsigned, so we must do a hack */
-   while (n && n != -1) {
+    while (n && n != -1) {
         *(char *)ind++ = n;
         n = n >> 8;
     }
@@ -306,10 +330,8 @@ get32(t)
 gsym1(t, b)
 {
     int n;
-    printf("gsym1(): Back patching: symbol address = %d\n", b);
     while (t) {
         n = get32(t); /* next value */
-        printf("gsym1(): Patching at offset: %d\n", t - prog);
         /* patch absolute reference (always mov/lea before) */
         if (*(char *)(t - 1) == 0x05) {
             /* XXX: incorrect if data < 0 */
@@ -375,10 +397,9 @@ gmov(l, t)
     int n;
     o(l + 0x83);
     n = *(int *)t;
-    if (n && n < LOCAL) {
+    if (n && n < LOCAL)
         oad(0x85, n);
-    }
-   else {
+    else {
         t = t + 4;
         *(int *)t = psym(0x05, *(int *)t);
     }
@@ -494,7 +515,6 @@ unary(l)
             l = l + 4;
         } else {
             /* forward reference */
-            printf("unary(): Function call to symbol at offset: %d\n", t - vars);
             t = t + 4;
             *(int *)t = psym(0xe8, *(int *)t);
         }
@@ -528,7 +548,7 @@ sum(l)
                 if (l == 4 | l == 5) {
                     gcmp(t);
                 } else {
-                    o(t); 
+                    o(t);
                     if (n == '%')
                         o(0x92); /* xchg %edx, %eax */
                 }
@@ -584,7 +604,6 @@ block(l)
             n = ind;
             a = test_expr();
         } else {
-            // 연산에서의 소괄호
             if (tok != ';')
                 expr();
             skip(';');
@@ -653,11 +672,11 @@ decl(l)
             *(int *)tok = ind;
             next();
             skip('(');
-            a = 8; // for 1st argument
+            a = 8;
             while (tok != ')') {
                 /* read param name and compute offset */
                 *(int *)tok = a;
-                a = a + 4; // for other arguments
+                a = a + 4;
                 next();
                 if (tok == ',')
                     next();
@@ -712,7 +731,14 @@ elf_reloc(l)
         b = *(int *)tok;
         n = *(int *)(tok + 4);
         if (n && b != 1) {
-
+#if 0
+            {
+                char buf[100];
+                memcpy(buf, a, t - a);
+                buf[t - a] = '\0';
+                printf("extern ref='%s' val=%x\n", buf, b);
+            }
+#endif
             if (!b) {
                 if (!l) {
                     /* symbol string */
