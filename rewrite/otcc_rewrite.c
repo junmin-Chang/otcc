@@ -18,7 +18,7 @@ int data_segment_current;
 int ra_list;
 
 /* machine code */
-int code_start_ptr, code_current_ptr;
+int text_segment_start, text_segment_current;
 
 /* file pointer */
 int file_ptr;
@@ -274,7 +274,7 @@ void skip(ch)
 generate_machine_code(bytes) 
 {
     while (bytes && bytes != -1) {
-        *(char *)code_current_ptr++ = bytes;
+        *(char *)text_segment_current++ = bytes;
         /*  emit machine code(0 ~ 4 bytes) buffer
             into machine code buffer
             with little endian 
@@ -330,7 +330,7 @@ patch_symbol_ref(addr, sym_position)
                 add_word_to_addr(addr, sym_position + data_offset);
             else
                 /* if symbol exists in code segment */
-                add_word_to_addr(addr, sym_position - code_start_ptr + text + data_offset);
+                add_word_to_addr(addr, sym_position - text_segment_start + text + data_offset);
         /* relative reference */
         } else {
             add_word_to_addr(addr, sym_position - addr - 4);
@@ -343,10 +343,10 @@ generate_machine_code_with_addr(word, addr)
 {
     generate_machine_code(word);
     /* append address to machine code */
-    add_word_to_addr(code_current_ptr, addr);
+    add_word_to_addr(text_segment_current, addr);
     /* address we appended right before */
-    addr = code_current_ptr;
-    code_current_ptr = code_current_ptr + 4;
+    addr = text_segment_current;
+    text_segment_current = text_segment_current + 4;
 
     /* return address we appended */
     return addr;
@@ -526,7 +526,7 @@ parse_unary_expr(l)
                     generate_machine_code(0x8b);
                 else
                     generate_machine_code(0xbe0f); /* movsbl (%eax), %(eax) */
-                code_current_ptr++; /* add zero in code */
+                text_segment_current++; /* add zero in code */
             }
         } else if (tmp_tok == '&') {
             generate_move(10, tok); /* leal EA, %eax */
@@ -632,7 +632,7 @@ parse_binary_expr(level)
                 skip 2 forward instructions
             */
             generate_jump(5); 
-            patch_symbol_ref(jump_chain, code_current_ptr);
+            patch_symbol_ref(jump_chain, text_segment_current);
             load_immediate(op_value);
             /*
                 for example, a && b
@@ -670,14 +670,14 @@ parse_block(l)
             read_token();
             /* don't know destination, patch it later */
             jump_addr = generate_jump(0);
-            patch_symbol_ref(cond_jump_addr, code_current_ptr); /* patch else jmp */
+            patch_symbol_ref(cond_jump_addr, text_segment_current); /* patch else jmp */
             /* parse else block */
             parse_block(l);
             /* patch destination --> end of else block */
-            patch_symbol_ref(jump_addr, code_current_ptr); /* patch if test */
+            patch_symbol_ref(jump_addr, text_segment_current); /* patch if test */
         } else {
             /* patch don't know address --> after if block */
-            patch_symbol_ref(cond_jump_addr, code_current_ptr);
+            patch_symbol_ref(cond_jump_addr, text_segment_current);
         }
     } else if (tok == TOK_WHILE | tok == TOK_FOR) {
         tmp_tok = tok;
@@ -685,7 +685,7 @@ parse_block(l)
         skip('(');
         if (tmp_tok == TOK_WHILE) {
             /* start of while loop address */
-            jump_addr = code_current_ptr;
+            jump_addr = text_segment_current;
             /*  parse condition, generate cond jump, 
                 we'll be redirected to this address
                 if we have false condition
@@ -698,7 +698,7 @@ parse_block(l)
             skip(';');
 
             /* address of condition checking, in loop */
-            jump_addr = code_current_ptr;
+            jump_addr = text_segment_current;
             /* address generates if condition has false */
             cond_jump_addr = 0;
             if (tok != ';')
@@ -710,15 +710,15 @@ parse_block(l)
                 tmp_tok = generate_jump(0);
                 parse_entire_expr();
                 /* go back to conditional check.. */
-                generate_jump(jump_addr - code_current_ptr - 5);
-                patch_symbol_ref(tmp_tok, code_current_ptr);
+                generate_jump(jump_addr - text_segment_current - 5);
+                patch_symbol_ref(tmp_tok, text_segment_current);
                 jump_addr = tmp_tok + 4;
             }
         }
         skip(')');
         parse_block(&cond_jump_addr);
-        generate_jump(jump_addr - code_current_ptr - 5);
-        patch_symbol_ref(cond_jump_addr, code_current_ptr);
+        generate_jump(jump_addr - text_segment_current - 5);
+        patch_symbol_ref(cond_jump_addr, text_segment_current);
     } else if (tok == '{') {
         read_token();
         /* declaration (local variables )*/
@@ -765,7 +765,7 @@ parse_decl(l)
             skip(';');
         } else { /* parse function declaration */
             /* put function address */
-            *(int *)tok = code_current_ptr;
+            *(int *)tok = text_segment_current;
             read_token();
             skip('(');
             /*
@@ -789,7 +789,7 @@ parse_decl(l)
             /* save to 'arg_offset' for patching */
             arg_offset = generate_machine_code_with_addr(0xec81, 0); /* sub $xxx, %esp */
             parse_block(0);
-            patch_symbol_ref(ra_list, code_current_ptr);
+            patch_symbol_ref(ra_list, text_segment_current);
             generate_machine_code(0xc3c9);
             /* patch $xxx in sub $xxx, %esp with local var's offset */
             add_word_to_addr(arg_offset, var_local_offset);
@@ -856,7 +856,7 @@ elf_reloc(l)
                         /* c = 0: R_386_32, c = 1: R_386_PC32 */
                         c = *(char *)(n - 1) != 0x05;
                         add_word_to_addr(n, -c * 4);
-                        gle32(n - code_start_ptr + text + data_offset);
+                        gle32(n - text_segment_start + text + data_offset);
                         gle32(p * 256 + c + 1);
                         n = a;
                     }
@@ -876,13 +876,13 @@ elf_out(c)
     /*****************************/
     /* add text segment (but copy it later to handle relocations) */
     text = data_segment_current;
-    text_size = code_current_ptr - code_start_ptr;
+    text_size = text_segment_current - text_segment_start;
 
     /* add the startup code */
-    code_current_ptr = code_start_ptr;
+    text_segment_current = text_segment_start;
     generate_machine_code(0x505458); /* pop %eax, push %esp, push %eax */
     t = *(int *)(var_table + TOK_MAIN);
-    generate_machine_code_with_addr(0xe8, t - code_current_ptr - 5);
+    generate_machine_code_with_addr(0xe8, t - text_segment_current - 5);
     generate_machine_code(0xc389);  /* movl %eax, %ebx */
     load_immediate(1);      /* mov $1, %eax */
     generate_machine_code(0x80cd);  /* int $0x80 */
@@ -929,7 +929,7 @@ elf_out(c)
     elf_reloc(2);
 
     /* copy code AFTER relocation is done */
-    memcpy(text, code_start_ptr, text_size);
+    memcpy(text, text_segment_start, text_size);
 
     glo_saved = data_segment_current;
     data_segment_current = data_segment_start;
@@ -1006,7 +1006,7 @@ main(n, t)
     sym_stack_current_ptr = strcpy(sym_stack_start_ptr = calloc(1, ALLOC_SIZE), 
                   " int if else while break return for define main ") + TOK_STR_SIZE;
     data_segment_current = data_segment_start = calloc(1, ALLOC_SIZE);
-    code_current_ptr = code_start_ptr = calloc(1, ALLOC_SIZE);
+    text_segment_current = text_segment_start = calloc(1, ALLOC_SIZE);
     var_table = calloc(1, ALLOC_SIZE);
 
     t = t + 4;
@@ -1014,7 +1014,7 @@ main(n, t)
 
     data_offset = ELF_BASE - data_segment_start; 
     data_segment_current = data_segment_current + ELFSTART_SIZE;
-    code_current_ptr = code_current_ptr + STARTUP_SIZE;
+    text_segment_current = text_segment_current + STARTUP_SIZE;
 
     read_ch();
     read_token();
