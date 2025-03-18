@@ -3,6 +3,11 @@
 /*
     변수 설명
 */
+int op_first_chars[24] = {'+', '+', '*', '/', '%', '+', '-', '<', '>', '<', '>', '<', '>', '=', '!', '&', '|', '&', '^', '|', '~', '!', '*', 0};
+int op_second_chars[24] = {'+', '@', '@', '@', '@', '@', '@', '<', '>', '=', '=', '@', '@', '=', '=', '&', '|', '@', '@', '@', '@', '@', '@', 0};
+int op_precedences[24] = {2, 2, 3, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 11, 12, 8, 9, 10, 2, 2, 1, 0};
+int op_codes[24] = {1, 1, 12693263, -101213807, -101213807, 51201, -654850007, 14734225, 16307089, 14, 13, 12, 15, 4, 5, 0, 1, 51233, 51249, 51209, 53495, 4, 0, 0};
+
 
 /* token, token constant(value), token level(precedence), current char */
 int tok, tok_constant, tok_level, ch; 
@@ -141,7 +146,7 @@ process_escape()
 
 read_token()
 {
-    int op_str, left, ahead; 
+    int left, ahead; 
 
     /* space, #define process */
     while (isspace(ch) | ch == '#') {
@@ -227,23 +232,21 @@ read_token()
             read_ch();
             read_token();
         } else {
-            op_str = "++#m--%am*@R<^1c/@%[_[H3c%@%[_[H3c+@.B#d-@%:_^BKd<<Z/03e>>`/03e<=0f>=/f<@.f>@1f==&g!=\'g&&k||#l&@.BCh^@.BSi|@.B+j~@/%Yd!@&d*@b";
             /* left = '+' from "++" */
-            while (left = *(char *)op_str++) {
-                ahead = *(char *)op_str++;
-                tok_constant = 0;
-                while ((tok_level = *(char *)op_str++ - 'b') < 0) {
-                    tok_constant = tok_constant * 64 + tok_level + 64;
-                }
-
-                if (left == tok & (ahead == ch | ahead == '@')) {
-                    if (ahead == ch) {
+            int i = 0;
+            while (op_first_chars[i] != 0) {
+               if (op_first_chars[i] == tok & (op_second_chars[i] == ch | op_second_chars[i] == '@')) {
+                    tok_level = op_precedences[i];
+                    tok_constant = op_codes[i];
+                    printf("opr : %c%c, level: %d, value: %d\n", op_first_chars[i], op_second_chars[i], op_precedences[i], op_codes[i]); 
+                
+                    if (op_second_chars[i] == ch) {
                         read_ch();
-                        /* dummy token for double tokens */
                         tok = TOK_DUMMY;
                     }
                     break;
-                }
+               }
+              i++;
             }
         }
     }
@@ -294,7 +297,7 @@ add_word_to_addr(addr, word) {
     *(char *)addr++ = word >> 16;
     *(char *)addr++ = word >> 24;
 }
-/* read 32bit word from memory address */
+/* read 32bit little-endian word from memory address */
 read_word_from_addr(addr)
 {
     int word;
@@ -315,7 +318,7 @@ read_word_from_addr(addr)
     when we met 'return' statement, 
     we should read all of that function
     to know where the function ends.
-    so we can patch that unresolved symbol
+    doing so, we can patch that unresolved symbol
 */
 patch_symbol_ref(addr, sym_position) 
 {
