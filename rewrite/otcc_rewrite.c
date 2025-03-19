@@ -301,7 +301,6 @@ add_word_to_addr(addr, word) {
 /* read 32bit little-endian word from memory address */
 read_word_from_addr(addr)
 {
-    int word;
     /* first 1 byte (LSB)*/
     int byte0 = *(char *)addr & 0xff;
     int byte1 = (*(char *)(addr + 1) & 0xff) << 8;
