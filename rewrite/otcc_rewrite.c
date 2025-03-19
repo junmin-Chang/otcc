@@ -1,6 +1,6 @@
 #include <stdarg.h>
 #include <stdio.h>
-
+#include "defs.h"
 /* token, token constant(value), token level(precedence), current char */
 int tok, tok_constant, tok_level, ch; 
 
@@ -48,24 +48,7 @@ allocate 99999Byte in Heap, using calloc
 --> machine code buffer
 --> variable table
 */
-#define ALLOC_SIZE 99999
 #define ELFOUT
-
-#define TOK_STR_SIZE        48
-#define TOK_IDENT           0x100
-#define TOK_INT             0x100
-#define TOK_IF              0x120
-#define TOK_ELSE            0x138
-#define TOK_WHILE           0x160
-#define TOK_BREAK           0x190  
-#define TOK_RETURN          0x1c0
-#define TOK_FOR             0x1f8
-#define TOK_DEFINE          0x218
-#define TOK_MAIN            0x250
-
-#define TOK_DUMMY           1
-#define TOK_NUM             2
-
 #define LOCAL               0x200
 
 #define SYM_FORWARD         0
@@ -984,27 +967,27 @@ elf_out(c)
     data_segment_current = strcpy(data_segment_current, "/lib/ld-linux.so.2") + 0x14;
 
     /* now the dynamic section */
-    elf_generate_little_endian_32(1); /* DT_NEEDED */
+    elf_generate_little_endian_32(DT_NEEDED); /* DT_NEEDED */
     elf_generate_little_endian_32(1); /* libc name */
-    elf_generate_little_endian_32(1); /* DT_NEEDED */
+    elf_generate_little_endian_32(DT_NEEDED); /* DT_NEEDED */
     elf_generate_little_endian_32(11); /* libdl name */
-    elf_generate_little_endian_32(4); /* DT_HASH */
+    elf_generate_little_endian_32(DT_HASH); /* DT_HASH */
     elf_generate_little_endian_32(hash + data_offset);
-    elf_generate_little_endian_32(6); /* DT_SYMTAB */
+    elf_generate_little_endian_32(DT_SYMTAB); /* DT_SYMTAB */
     elf_generate_little_endian_32(dynsym + data_offset);
-    elf_generate_little_endian_32(5); /* DT_STRTAB */
+    elf_generate_little_endian_32(DT_STRTAB); /* DT_STRTAB */
     elf_generate_little_endian_32(dynstr + data_offset);
-    elf_generate_little_endian_32(10); /* DT_STRSZ */
+    elf_generate_little_endian_32(DT_STRSZ); /* DT_STRSZ */
     elf_generate_little_endian_32(dynstr_size);
-    elf_generate_little_endian_32(11); /* DT_SYMENT */
+    elf_generate_little_endian_32(DT_SYMENT); /* DT_SYMENT */
     elf_generate_little_endian_32(16);
-    elf_generate_little_endian_32(17); /* DT_REL */
+    elf_generate_little_endian_32(DT_REL); /* DT_REL */
     elf_generate_little_endian_32(rel + data_offset);
-    elf_generate_little_endian_32(18); /* DT_RELSZ */
+    elf_generate_little_endian_32(DT_RELSZ); /* DT_RELSZ */
     elf_generate_little_endian_32(glo_saved - rel);
-    elf_generate_little_endian_32(19); /* DT_RELENT */
+    elf_generate_little_endian_32(DT_RELENT); /* DT_RELENT */
     elf_generate_little_endian_32(8);
-    elf_generate_little_endian_32(0);  /* DT_NULL */
+    elf_generate_little_endian_32(DT_NULL);  /* DT_NULL */
     elf_generate_little_endian_32(0);
 
     /* write binary */
