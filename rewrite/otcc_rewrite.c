@@ -804,13 +804,13 @@ parse_decl(l)
 
 #ifdef ELFOUT
 
-elf_generate_little_endian_32(n)
+elf_generate_little_endian_32(addr)
 {
-    add_word_to_addr(data_segment_current, n);
+    add_word_to_addr(data_segment_current, addr);
     data_segment_current = data_segment_current + 4;
 }
 
-/* used to generate a program header at offset 't' of size 's' */
+/* used to generate a program header at offset 'n' of size 't' */
 elf_generate_program_header(n, t)
 {
     elf_generate_little_endian_32(n);
@@ -821,54 +821,70 @@ elf_generate_program_header(n, t)
     elf_generate_little_endian_32(t);
 }
 
+/* use to relocate symbols that has not been resolved (because of forward reference) */
 elf_reloc(l)
 {
-    int t, a, n, p, b, c;
+    /* 
+        - During iterate symbol stack, check if this symbol is 'forward referenced'
+        - Extract symbol's name/info, and Relocate the symbol into proper section
+        
+        pos: currently processing symbol's position in symbol stack
+        sym_name_ptr: current symbol name's addr
+        sym_ref_list: current symbol's reference list 
+        sym_offset: symbol offset / index
+        sym_value: symbol's value (addr or state)
+        sym_type_flag: relocate type flag (0: absolute address, 1: relative address)
+    */
+    int pos, sym_name_ptr, sym_ref_list, sym_offset, sym_value, sym_type_flag;
 
-    p = 0;
-    t = sym_stack_start_ptr;
+    sym_offset = 0;
+    pos = sym_stack_start_ptr;
     while (1) {
         /* extract symbol name */
-        t++;
-        a = t;
-        while (*(char *)t != TAG_TOK && t < sym_stack_current_ptr)
-            t++;
-        if (t == sym_stack_current_ptr)
+        pos++;
+        sym_name_ptr = pos;
+        while (*(char *)pos != TAG_TOK && pos < sym_stack_current_ptr)
+            pos++;
+        if (pos == sym_stack_current_ptr)
             break;
         /* now see if it is forward defined */
-        tok = var_table + (a - sym_stack_start_ptr) * 8 + TOK_IDENT - 8;
-        b = *(int *)tok;
-        n = *(int *)(tok + 4);
-        if (n && b != 1) {
-
-            if (!b) {
+        tok = var_table + (sym_name_ptr - sym_stack_start_ptr) * 8 + TOK_IDENT - 8;
+        /* deref , and extract symbol's value  */
+        sym_value = *(int *)tok;
+        sym_ref_list = *(int *)(tok + 4);
+        /* if !sym_value, this symbol is not defined(external symbol) */
+        if (sym_ref_list && !sym_value) {
+            if (!sym_value) {
                 if (!l) {
-                    /* symbol string */
-                    memcpy(data_segment_current, a, t - a);
-                    data_segment_current = data_segment_current + t - a + 1; /* add a zero */
+                    /* symbol string(copy symbol's name to dynstr table) */
+                    memcpy(data_segment_current, sym_name_ptr, pos - sym_name_ptr);
+                    data_segment_current = data_segment_current + pos - sym_name_ptr + 1; /* add a zero */
                 } else if (l == 1) {
-                    /* symbol table */
-                    elf_generate_little_endian_32(p + DYNSTR_BASE);
+                    /* symbol table .dynsym */
+                    elf_generate_little_endian_32(sym_offset + DYNSTR_BASE);
                     elf_generate_little_endian_32(0);
                     elf_generate_little_endian_32(0);
                     elf_generate_little_endian_32(0x10); /* STB_GLOBAL, STT_NOTYPE */
-                    p = p + t - a + 1; /* add a zero */
+                    sym_offset = sym_offset + pos - sym_name_ptr + 1; /* add a zero */
                 } else {
-                    p++;
+                    /* .rel.text */
+                    sym_offset++;
                     /* generate relocation patches */
-                    while (n) {
-                        a = read_word_from_addr(n);
-                        /* c = 0: R_386_32, c = 1: R_386_PC32 */
-                        c = *(char *)(n - 1) != 0x05;
-                        add_word_to_addr(n, -c * 4);
-                        elf_generate_little_endian_32(n - text_segment_start + text + data_offset);
-                        elf_generate_little_endian_32(p * 256 + c + 1);
-                        n = a;
+                    while (sym_ref_list) {
+                        sym_name_ptr = read_word_from_addr(sym_ref_list);
+                        /* sym_type_flag = 0: R_386_32, c = 1: R_386_PC32 */
+                        sym_type_flag = *(char *)(sym_ref_list - 1) != 0x05;
+                        add_word_to_addr(sym_ref_list, -sym_type_flag * 4);
+                        /* record relocate position */
+                        elf_generate_little_endian_32(sym_ref_list - text_segment_start + text + data_offset);
+                        /* record relocate info R_386_32 / R_386_PC32*/
+                        elf_generate_little_endian_32(sym_offset * 256 + sym_type_flag + 1);
+                        sym_ref_list = sym_name_ptr;
                     }
                 }
             } else if (!l) {
                 /* generate standard relocation */
-                patch_symbol_ref(n, b);
+                patch_symbol_ref(sym_ref_list, sym_value);
             }
         }
     }
