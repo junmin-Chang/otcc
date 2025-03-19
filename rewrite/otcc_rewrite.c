@@ -493,7 +493,7 @@ parse_unary_expr(l)
             skip(')');
         } else if (tmp_tok == '*') {
             /* hard to understand */
-            /* parse cast */
+            /* parse casting */
             skip('*');
             tmp_tok = tok; /* get type */
             read_token(); /* skip int/char/void */
@@ -523,14 +523,10 @@ parse_unary_expr(l)
                     if tok type == INT --> store 4bytes(%eax)
                     else               --> store 1bytes(%al)
                  */
-                
                 generate_machine_code(0x0188 + (tmp_tok == TOK_INT)); 
             } else if (tmp_tok) {
-                if (tmp_tok == TOK_INT)
-                    /* store 4byte*/
-                    generate_machine_code(0x8b);
-                else
-                    generate_machine_code(0xbe0f); /* movsbl (%eax), %(eax) */
+                /* load derefed value */
+                generate_machine_code(tmp_tok == TOK_INT ? 0x8b : 0xbe0f);
                 text_segment_current++; /* add zero in code */
             }
         } else if (tmp_tok == '&') {
@@ -580,7 +576,6 @@ parse_unary_expr(l)
             l = l + 4;
         } else {
             /* direct call */
-            /* forward reference */
             tmp_tok = tmp_tok + 4;
             *(int *)tmp_tok = generate_machine_code_with_addr(0xe8, *(int *)tmp_tok);
         }
@@ -804,7 +799,7 @@ parse_decl(l)
 
 #ifdef ELFOUT
 
-elf_generate_little_endian_32(addr)
+elf_generate_little_endian_word(addr)
 {
     add_word_to_addr(data_segment_current, addr);
     data_segment_current = data_segment_current + 4;
