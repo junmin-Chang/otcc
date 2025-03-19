@@ -805,21 +805,21 @@ parse_decl(l)
 
 #ifdef ELFOUT
 
-gle32(n)
+elf_generate_little_endian_32(n)
 {
     add_word_to_addr(data_segment_current, n);
     data_segment_current = data_segment_current + 4;
 }
 
 /* used to generate a program header at offset 't' of size 's' */
-gphdr1(n, t)
+elf_generate_program_header(n, t)
 {
-    gle32(n);
+    elf_generate_little_endian_32(n);
     n = n + ELF_BASE;
-    gle32(n);
-    gle32(n);
-    gle32(t);
-    gle32(t);
+    elf_generate_little_endian_32(n);
+    elf_generate_little_endian_32(n);
+    elf_generate_little_endian_32(t);
+    elf_generate_little_endian_32(t);
 }
 
 elf_reloc(l)
@@ -849,10 +849,10 @@ elf_reloc(l)
                     data_segment_current = data_segment_current + t - a + 1; /* add a zero */
                 } else if (l == 1) {
                     /* symbol table */
-                    gle32(p + DYNSTR_BASE);
-                    gle32(0);
-                    gle32(0);
-                    gle32(0x10); /* STB_GLOBAL, STT_NOTYPE */
+                    elf_generate_little_endian_32(p + DYNSTR_BASE);
+                    elf_generate_little_endian_32(0);
+                    elf_generate_little_endian_32(0);
+                    elf_generate_little_endian_32(0x10); /* STB_GLOBAL, STT_NOTYPE */
                     p = p + t - a + 1; /* add a zero */
                 } else {
                     p++;
@@ -862,8 +862,8 @@ elf_reloc(l)
                         /* c = 0: R_386_32, c = 1: R_386_PC32 */
                         c = *(char *)(n - 1) != 0x05;
                         add_word_to_addr(n, -c * 4);
-                        gle32(n - text_segment_start + text + data_offset);
-                        gle32(p * 256 + c + 1);
+                        elf_generate_little_endian_32(n - text_segment_start + text + data_offset);
+                        elf_generate_little_endian_32(p * 256 + c + 1);
                         n = a;
                     }
                 }
@@ -910,24 +910,24 @@ elf_out(c)
     /* add symbol table */
     data_segment_current = (data_segment_current + 3) & -4;
     dynsym = data_segment_current;
-    gle32(0);
-    gle32(0);
-    gle32(0);
-    gle32(0);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0);
     elf_reloc(1);
 
     /*****************************/
     /* add symbol hash table */
     hash = data_segment_current;
     n = (data_segment_current - dynsym) / 16;
-    gle32(1); /* one bucket (simpler!) */
-    gle32(n);
-    gle32(1);
-    gle32(0); /* dummy first symbol */
+    elf_generate_little_endian_32(1); /* one bucket (simpler!) */
+    elf_generate_little_endian_32(n);
+    elf_generate_little_endian_32(1);
+    elf_generate_little_endian_32(0); /* dummy first symbol */
     t = 2;
     while (t < n)
-        gle32(t++);
-    gle32(0);
+        elf_generate_little_endian_32(t++);
+    elf_generate_little_endian_32(0);
     
     /*****************************/
     /* relocation table */
@@ -941,62 +941,63 @@ elf_out(c)
     data_segment_current = data_segment_start;
 
     /* elf header */
-    gle32(0x464c457f);
-    gle32(0x00010101);
-    gle32(0);
-    gle32(0);
-    gle32(0x00030002);
-    gle32(1);
-    gle32(text + data_offset); /* address of _start */
-    gle32(PHDR_OFFSET); /* offset of phdr */
-    gle32(0);
-    gle32(0);
-    gle32(0x00200034);
-    gle32(3); /* phdr entry count */
+    elf_generate_little_endian_32(0x464c457f);
+    elf_generate_little_endian_32(0x00010101);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0x00030002);
+    elf_generate_little_endian_32(1);
+    elf_generate_little_endian_32(text + data_offset); /* address of _start */
+    elf_generate_little_endian_32(PHDR_OFFSET); /* offset of phdr */
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0);
+    elf_generate_little_endian_32(0x00200034);
+    elf_generate_little_endian_32(3); /* phdr entry count */
 
     /* program headers */
-    gle32(3); /* PT_INTERP */
-    gphdr1(INTERP_OFFSET, INTERP_SIZE);
-    gle32(4); /* PF_R */
-    gle32(1); /* align */
+    elf_generate_little_endian_32(3); /* PT_INTERP */
+    elf_generate_program_header(INTERP_OFFSET, INTERP_SIZE);
+    elf_generate_little_endian_32(4); /* PF_R */
+    elf_generate_little_endian_32(1); /* align */
     
-    gle32(1); /* PT_LOAD */
-    gphdr1(0, glo_saved - data_segment_start);
-    gle32(7); /* PF_R | PF_X | PF_W */
-    gle32(0x1000); /* align */
+    elf_generate_little_endian_32(1); /* PT_LOAD */
+    elf_generate_program_header(0, glo_saved - data_segment_start);
+    elf_generate_little_endian_32(7); /* PF_R | PF_X | PF_W */
+    elf_generate_little_endian_32(0x1000); /* align */
     
-    gle32(2); /* PT_DYNAMIC */
-    gphdr1(DYNAMIC_OFFSET, DYNAMIC_SIZE);
-    gle32(6); /* PF_R | PF_W */
-    gle32(0x4); /* align */
+    elf_generate_little_endian_32(2); /* PT_DYNAMIC */
+    elf_generate_program_header(DYNAMIC_OFFSET, DYNAMIC_SIZE);
+    elf_generate_little_endian_32(6); /* PF_R | PF_W */
+    elf_generate_little_endian_32(0x4); /* align */
 
     /* now the interpreter name */
     data_segment_current = strcpy(data_segment_current, "/lib/ld-linux.so.2") + 0x14;
 
     /* now the dynamic section */
-    gle32(1); /* DT_NEEDED */
-    gle32(1); /* libc name */
-    gle32(1); /* DT_NEEDED */
-    gle32(11); /* libdl name */
-    gle32(4); /* DT_HASH */
-    gle32(hash + data_offset);
-    gle32(6); /* DT_SYMTAB */
-    gle32(dynsym + data_offset);
-    gle32(5); /* DT_STRTAB */
-    gle32(dynstr + data_offset);
-    gle32(10); /* DT_STRSZ */
-    gle32(dynstr_size);
-    gle32(11); /* DT_SYMENT */
-    gle32(16);
-    gle32(17); /* DT_REL */
-    gle32(rel + data_offset);
-    gle32(18); /* DT_RELSZ */
-    gle32(glo_saved - rel);
-    gle32(19); /* DT_RELENT */
-    gle32(8);
-    gle32(0);  /* DT_NULL */
-    gle32(0);
+    elf_generate_little_endian_32(1); /* DT_NEEDED */
+    elf_generate_little_endian_32(1); /* libc name */
+    elf_generate_little_endian_32(1); /* DT_NEEDED */
+    elf_generate_little_endian_32(11); /* libdl name */
+    elf_generate_little_endian_32(4); /* DT_HASH */
+    elf_generate_little_endian_32(hash + data_offset);
+    elf_generate_little_endian_32(6); /* DT_SYMTAB */
+    elf_generate_little_endian_32(dynsym + data_offset);
+    elf_generate_little_endian_32(5); /* DT_STRTAB */
+    elf_generate_little_endian_32(dynstr + data_offset);
+    elf_generate_little_endian_32(10); /* DT_STRSZ */
+    elf_generate_little_endian_32(dynstr_size);
+    elf_generate_little_endian_32(11); /* DT_SYMENT */
+    elf_generate_little_endian_32(16);
+    elf_generate_little_endian_32(17); /* DT_REL */
+    elf_generate_little_endian_32(rel + data_offset);
+    elf_generate_little_endian_32(18); /* DT_RELSZ */
+    elf_generate_little_endian_32(glo_saved - rel);
+    elf_generate_little_endian_32(19); /* DT_RELENT */
+    elf_generate_little_endian_32(8);
+    elf_generate_little_endian_32(0);  /* DT_NULL */
+    elf_generate_little_endian_32(0);
 
+    /* write binary */
     t = fopen(c, "w");
     fwrite(data_segment_start, 1, glo_saved - data_segment_start, t);
     fclose(t);
